@@ -6,6 +6,7 @@ interface IVoter {
     function governor() external view returns (address);
     function gauges(address _pair) external view returns (address);
     function factory() external view returns (address);
+    function gaugefactory() external view returns (address);
     function minter() external view returns(address);
     function emergencyCouncil() external view returns (address);
     function isWhitelisted(address token) external view returns (bool);
@@ -22,5 +23,7 @@ interface IVoter {
     function poolVote(uint id, uint _index) external view returns(address _pair);
     function votes(uint id, address _pool) external view returns(uint votes);
     function poolVoteLength(uint tokenId) external view returns(uint);
-    
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+    function weights(address pool) external view returns(uint weight);
 }

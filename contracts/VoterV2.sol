@@ -5,7 +5,7 @@ import './libraries/Math.sol';
 import './interfaces/IBribe.sol';
 import './interfaces/IBribeFactory.sol';
 import './interfaces/IGauge.sol';
-import './interfaces/IGaugeFactory.sol';
+import './interfaces/IGaugeFactoryV2.sol';
 import './interfaces/IERC20.sol';
 import './interfaces/IMinter.sol';
 import './interfaces/IPair.sol';
@@ -48,10 +48,11 @@ contract VoterV2 is IVoter, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     mapping(uint => uint) public usedWeights;  // nft => total voting weight of user
     mapping(uint => uint) public lastVoted; // nft => timestamp of last vote, to ensure one vote per epoch
     mapping(address => bool) public isGauge;
+    mapping(address => bool) public isCLGauge;
     mapping(address => bool) public isWhitelisted;
     mapping(address => bool) public isAlive;
 
-    event GaugeCreated(address indexed gauge, address creator, address internal_bribe, address indexed external_bribe, address indexed pool);
+    event GaugeCreated(address indexed gauge, address creator, address internal_bribe, address indexed external_bribe, address indexed pool, bool isCL);
     event GaugeKilled(address indexed gauge);
     event GaugeRevived(address indexed gauge);
     event Voted(address indexed voter, uint tokenId, uint256 weight);
@@ -208,14 +209,16 @@ contract VoterV2 is IVoter, OwnableUpgradeable, ReentrancyGuardUpgradeable {
         emit Whitelisted(msg.sender, _token);
     }
 
-    function createGauge(address _pool) external returns (address) {
+    function createGauge(address _pool, bool _isCL) external returns (address) {
         require(gauges[_pool] == address(0x0), "Voter: Gauge already created");
-        bool isPair = IPairFactory(factory).isPair(_pool);
+        require(msg.sender == governor || !_isCL, "Voter: Should be governor");
+        bool isPair = _isCL || IPairFactory(factory).isPair(_pool);
         address tokenA;
         address tokenB;
 
         if (isPair) {
-            (tokenA, tokenB) = IPair(_pool).tokens();
+            tokenA = IPair(_pool).token0();
+            tokenB = IPair(_pool).token1();
         }
 
         if (msg.sender != governor) { // gov can create for any pool, even non-Ascent pairs
@@ -229,7 +232,10 @@ contract VoterV2 is IVoter, OwnableUpgradeable, ReentrancyGuardUpgradeable {
         _type = string.concat("Ascent Bribes: ", IERC20(_pool).symbol() );
         address _external_bribe = IBribeFactory(bribefactory).createBribe(owner(), tokenA, tokenB, _type);
 
-        address _gauge = IGaugeFactory(gaugefactory).createGaugeV2(base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair);
+        bool isCL = _isCL; // to avoid stack to deep
+        address _gauge = IGaugeFactory(gaugefactory).createGaugeV2(
+            base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair, isCL
+        );
 
         IERC20(base).approve(_gauge, type(uint).max);
         internal_bribes[_gauge] = _internal_bribe;
@@ -237,10 +243,11 @@ contract VoterV2 is IVoter, OwnableUpgradeable, ReentrancyGuardUpgradeable {
         gauges[_pool] = _gauge;
         poolForGauge[_gauge] = _pool;
         isGauge[_gauge] = true;
+        isCLGauge[_gauge] = _isCL;
         isAlive[_gauge] = true;
         _updateFor(_gauge);
         pools.push(_pool);
-        emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool);
+        emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool, isCL);
         return _gauge;
     }
 
@@ -440,7 +447,7 @@ contract VoterV2 is IVoter, OwnableUpgradeable, ReentrancyGuardUpgradeable {
             isAlive[_gauge] = true;
             _updateFor(_gauge);
             pools.push(_pool);
-            emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool);
+            emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool, false);
         }
     }
 

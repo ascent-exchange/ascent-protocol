@@ -23,13 +23,17 @@ interface IRewarder {
     ) external;
 }
 
+interface IFeeVault {
+    function claimFees() external returns(uint256 claimed0, uint256 claimed1);
+}
 
 contract GaugeV2 is IGauge, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
-    bool public isForPair;
-
+    bool public immutable isForPair;
+    bool public immutable isForCL;
+    address public feeVault;
 
     IERC20 public rewardToken;
     IERC20 public _VE;
@@ -74,18 +78,19 @@ contract GaugeV2 is IGauge, ReentrancyGuard, Ownable {
         _;
     }
 
-    constructor(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isForPair) {
+    constructor(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isForPair, bool _isForCL, address _feeVault) {
         rewardToken = IERC20(_rewardToken);     // main reward
         _VE = IERC20(_ve);                      // vested
         TOKEN = IERC20(_token);                 // underlying (LP)
         DISTRIBUTION = _distribution;           // distro address (voter)
-        DURATION = 7 * 86400;                    // distro time
+        DURATION = 7 * 86400;                   // distro time
 
         internal_bribe = _internal_bribe;       // lp fees goes here
         external_bribe = _external_bribe;       // bribe fees goes here
 
-        isForPair = _isForPair;                       // pair boolean, if false no claim_fees
-
+        isForPair = _isForPair;                 // pair boolean, if false no claim_fees
+        isForCL = _isForCL;                     // specify if this gauge is for CL V3 pool
+        feeVault = _feeVault;                   // fee vault concentrated liqudity position
     }
 
     ///@notice set distribution address (should be GaugeProxyL2)
@@ -100,6 +105,13 @@ contract GaugeV2 is IGauge, ReentrancyGuard, Ownable {
         require(_gaugeRewarder != address(0), "zero addr");
         require(_gaugeRewarder != gaugeRewarder, "same addr");
         gaugeRewarder = _gaugeRewarder;
+    }
+
+    ///@notice set feeVault address
+    function setFeeVault(address _feeVault) external onlyOwner {
+        require(_feeVault != address(0), "zero addr");
+        require(_feeVault != feeVault, "same addr");
+        feeVault = _feeVault;
     }
 
     ///@notice set extra rewarder pid
@@ -124,7 +136,7 @@ contract GaugeV2 is IGauge, ReentrancyGuard, Ownable {
         return Math.min(block.timestamp, periodFinish);
     }
 
-    ///@notice  reward for a sinle token
+    ///@notice  reward for a single token
     function rewardPerToken() public view returns (uint256) {
         if (_totalSupply == 0) {
             return rewardPerTokenStored;
@@ -254,15 +266,20 @@ contract GaugeV2 is IGauge, ReentrancyGuard, Ownable {
     }
 
      function _claimFees() internal returns (uint claimed0, uint claimed1) {
-        if (!isForPair) {
+        if (!isForCL && !isForPair) {
             return (0, 0);
         }
         address _token = address(TOKEN);
 
-        (claimed0, claimed1) = IPair(_token).claimFees();
+        if (!isForCL) {
+            (claimed0, claimed1) = IPair(_token).claimFees();
+        } else {
+            (claimed0, claimed1) = IFeeVault(feeVault).claimFees();
+        }
 
         if (claimed0 > 0 || claimed1 > 0) {
-            (address _token0, address _token1) = IPair(_token).tokens();
+            address _token0 = IPair(_token).token0();
+            address _token1 = IPair(_token).token1();
 
             if (claimed0  > 0) {
                 IERC20(_token0).approve(internal_bribe, claimed0);

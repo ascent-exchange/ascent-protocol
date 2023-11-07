@@ -11,4 +11,7 @@ interface IGauge {
     function totalSupply() external view returns (uint);
     function earned(address account) external view returns (uint);
     function setDistribution(address _distribution) external;
+    function setRewarderPid(uint256 _pid) external;
+    function setGaugeRewarder(address _gaugeRewarder) external;
+    function setFeeVault(address _feeVault) external;
 }
